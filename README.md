@@ -5,8 +5,6 @@
 <div align="center">
 
 # bilimiao-EN (BiliMiao)
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/gakipaiperopero/bilimiao-EN)](https://github.com/gakipaiperopero/bilimiao-EN/releases) ![GitHub All Releases](https://img.shields.io/github/downloads/gakipaiperopero/bilimiao-EN/total) ![GitHub stars](https://img.shields.io/github/stars/gakipaiperopero/bilimiao-EN?style=flat) ![GitHub forks](https://img.shields.io/github/forks/gakipaiperopero/bilimiao-EN)
-
 **An English-friendly fork of [bilimiao2](https://github.com/10miaomiao/bilimiao2) — a third-party Bilibili client for Android & Desktop.**
 
 </div>
