@@ -35,16 +35,43 @@ Grab the latest APK or desktop package from [GitHub Releases](https://github.com
 
 ### Desktop Usage
 
-1. Download the `bilimiao-*-linux-x64.tar.gz` from [Releases](https://github.com/gakipaiperopero/bilimiao-EN/releases)
+**Pre-built package:** currently available for Linux x64 only. Windows and macOS users must [build from source](#building-from-source).
+
+#### Linux (x64)
+
+1. Download `bilimiao-*-linux-x64.tar.gz` from [Releases](https://github.com/gakipaiperopero/bilimiao-EN/releases)
 2. Extract: `tar -xzf bilimiao-*-linux-x64.tar.gz`
 3. Run: `./bilimiao/bin/bilimiao`
 
-**Requirements:**
-- **VLC 3.0+** — required for video playback. Install via your package manager:
-  - Debian/Ubuntu: `sudo apt install vlc`
-  - Arch Linux: `sudo pacman -S vlc`
-  - Fedora: `sudo dnf install vlc`
-- **FFmpeg** (optional) — enables automatic DASH stream muxing during downloads. Install if you want video+audio merged into a single MKV file.
+#### Windows / macOS
+
+No pre-built packages available yet. See [Building from Source](#building-from-source) below.
+
+#### Requirements (all platforms)
+
+- **VLC 3.0+** — required for video playback
+- **FFmpeg** (optional) — enables automatic DASH stream muxing during downloads (video+audio merged into a single MKV file)
+
+### Building from Source
+
+**Prerequisites:** Java 17+, Android SDK (for APK build), and VLC development headers.
+
+```bash
+# Build desktop app (runs on current OS)
+./gradlew :desktop-app:run
+
+# Package desktop distribution for current OS
+./gradlew :desktop-app:packageDistributionForCurrentOS
+
+# Build Android APK (full flavor)
+./gradlew assembleFullDebug
+
+# Build Android APK (FOSS flavor)
+./gradlew assembleFossDebug
+```
+
+On **Windows**, you can produce an `.msi` installer with `./gradlew :desktop-app:packageMsi`.  
+On **macOS**, a `.dmg` package with `./gradlew :desktop-app:packageDmg`.
 
 ### Android Usage
 
