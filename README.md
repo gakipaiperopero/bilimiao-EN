@@ -21,6 +21,7 @@ This is a fork of the excellent [bilimiao2](https://github.com/10miaomiao/bilimi
 
 - **English translations** — All Chinese UI text and code comments have been translated to English for international contributors
 - **Desktop improvements** — Fixed no-sound issues in the desktop VLC player; added FFmpeg-based DASH stream muxing (video.m4s + audio.m4s → single video.mkv) during downloads
+- **Different download paths** — Android: `/storage/emulated/0/Download/bilimiao_EN/`; Desktop: `~/Downloads/bilimiao/`
 - **No F-Droid release** — This fork does not publish to F-Droid. Only GitHub Releases are available.
 
 ### Credits
