@@ -1,0 +1,177 @@
+import java.io.FileInputStream
+import java.util.Properties
+
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    alias(libs.plugins.jetbrains.kotlin.serialization)
+    kotlin("plugin.compose")
+}
+
+android {
+    namespace = "com.a10miaomiao.bilimiao"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "com.a10miaomiao.bilimiao"
+        minSdk = 24
+        targetSdk = 35
+        versionCode = 118
+        versionName = "2.5.0 alpha"
+
+        flavorDimensions("default")
+
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters.add("arm64-v8a")
+            abiFilters.add("armeabi-v7a")
+            abiFilters.add("armeabi")
+            abiFilters.add("x86")
+            abiFilters.add("x86_64")
+        }
+    }
+
+    val signingFile = file("signing.properties")
+    if (signingFile.exists()) {
+        val props = Properties()
+        props.load(FileInputStream(signingFile))
+        signingConfigs {
+            create("miao") {
+                keyAlias = props.getProperty("KEY_ALIAS")
+                keyPassword = props.getProperty("KEY_PASSWORD")
+                storeFile = file(props.getProperty("KEYSTORE_FILE"))
+                storePassword = props.getProperty("KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".dev"
+            resValue("string", "app_name", "bilimiao dev")
+            manifestPlaceholders["channel"] = "Development"
+        }
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            signingConfigs.asMap["miao"]?.let {
+                signingConfig = it
+            }
+        }
+        create("benchmark") {
+            initWith(buildTypes.getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            isDebuggable = false
+        }
+    }
+
+    productFlavors {
+        create("full") {
+            dimension = flavorDimensionList[0]
+            val channelName = project.properties["channel"] ?: "Unknown"
+            manifestPlaceholders["channel"] = channelName
+        }
+        create("foss") {
+            dimension = flavorDimensionList[0]
+            manifestPlaceholders["channel"] = "FOSS"
+        }
+    }
+
+    compileOptions {
+        // Flag to enable support for the new language APIs
+        isCoreLibraryDesugaringEnabled = true
+
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    buildFeatures {
+        compose = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+
+    dependenciesInfo {
+        // Disables dependency metadata when building APKs.
+        includeInApk = false
+        // Disables dependency metadata when building Android App Bundles.
+        includeInBundle = false
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+    }
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
+
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.material)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.browser)
+    implementation(libs.androidx.profileinstaller)
+
+    // Compose dependencies for Player wrapper
+    val composeBom = platform(libs.androidx.compose.bom)
+    implementation(composeBom)
+    implementation(libs.compose.ui)
+    implementation(libs.compose.foundation)
+    implementation(libs.compose.runtime)
+    implementation(libs.compose.material)
+    implementation(libs.compose.material.icons.extended)
+    implementation(libs.activity.compose)
+
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kodein.di)
+
+    implementation(libs.materialkolor)
+
+    implementation(libs.mojito)
+    implementation(libs.mojito.sketch)
+    implementation(libs.mojito.glide)
+
+    // 播放器相关
+    implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.decoder)
+    implementation(libs.androidx.media3.ui)
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.exoplayer.dash)
+    implementation(libs.gsy.video.player)
+
+    implementation(libs.okhttp3)
+    implementation(libs.pbandk.runtime)
+    implementation(libs.glide)
+    annotationProcessor(libs.glide.compiler)
+    implementation(libs.microg.safeparcel)
+
+    implementation(project(":bilimiao-comm"))
+    implementation(project(":bilimiao-download"))
+    implementation(project(":bilimiao-cover"))
+    implementation(project(":bilimiao-compose"))
+    // 弹幕引擎
+    implementation(project(":DanmakuFlameMaster"))
+
+    // 闭源库：百度统计、极验验证
+    "fullImplementation"(libs.baidu.mobstat.sdk)
+    "fullImplementation"(libs.geetest.sensebot)
+    // av1解码器：https://github.com/androidx/media/tree/release/libraries/decoder_av1
+    "fullImplementation"(files("libs/lib-decoder-av1-release.aar"))
+
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
+}

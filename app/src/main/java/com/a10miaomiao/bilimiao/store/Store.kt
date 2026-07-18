@@ -1,0 +1,66 @@
+package com.a10miaomiao.bilimiao.store
+
+import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
+import com.a10miaomiao.bilimiao.comm.diViewModel
+import com.a10miaomiao.bilimiao.comm.store.AppStore
+import com.a10miaomiao.bilimiao.comm.store.FilterStore
+import com.a10miaomiao.bilimiao.comm.store.MessageStore
+import com.a10miaomiao.bilimiao.comm.store.PlayListStore
+import com.a10miaomiao.bilimiao.comm.store.PlayerStore
+import cn.a10miaomiao.bilimiao.compose.store.RegionStore
+import com.a10miaomiao.bilimiao.comm.store.TimeSettingStore
+import com.a10miaomiao.bilimiao.comm.store.UserLibraryStore
+import com.a10miaomiao.bilimiao.comm.store.UserStateProvider
+import com.a10miaomiao.bilimiao.comm.store.UserStore
+import com.a10miaomiao.bilimiao.comm.store.SettingsProvider
+import com.a10miaomiao.bilimiao.comm.store.AndroidSettingsProvider
+import org.kodein.di.DI
+import org.kodein.di.DIAware
+import org.kodein.di.bindSingleton
+
+class Store (
+        private val activity: AppCompatActivity,
+        override val di: DI,
+): DIAware {
+
+        val appStore: AppStore by activity.diViewModel(di)
+        val playListStore: PlayListStore by activity.diViewModel(di)
+        val playerStore: PlayerStore by activity.diViewModel(di)
+        val userStore: UserStore by activity.diViewModel(di)
+        val userLibraryStore: UserLibraryStore by activity.diViewModel(di)
+        val messageStore: MessageStore by activity.diViewModel(di)
+        val timeSettingStore: TimeSettingStore by activity.diViewModel(di)
+        val filterStore: FilterStore by activity.diViewModel(di)
+        val regionStore: RegionStore by activity.diViewModel(di)
+
+        fun loadStoreModules(diBuilder: DI.Builder) = diBuilder.run{
+                bindSingleton<SettingsProvider> { AndroidSettingsProvider(activity) }
+                bindSingleton { appStore }
+                bindSingleton { playListStore }
+                bindSingleton { playerStore }
+                bindSingleton { userStore }
+                bindSingleton<UserStateProvider> { userStore }
+                bindSingleton { userLibraryStore }
+                bindSingleton { messageStore }
+                bindSingleton { timeSettingStore }
+                bindSingleton { filterStore }
+                bindSingleton { regionStore }
+        }
+
+        fun onCreate(savedInstanceState: Bundle?) {
+                appStore.init()
+                playerStore.init()
+                userStore.init()
+                userLibraryStore.init()
+                messageStore.init()
+                timeSettingStore.init()
+                filterStore.init()
+                regionStore.init()
+        }
+
+        fun onDestroy() {
+
+        }
+
+}
