@@ -33,6 +33,25 @@ This is a fork of the excellent [bilimiao2](https://github.com/10miaomiao/bilimi
 
 Grab the latest APK or desktop package from [GitHub Releases](https://github.com/gakipaiperopero/bilimiao-EN/releases).
 
+### Desktop Usage
+
+1. Download the `bilimiao-*-linux-x64.tar.gz` from [Releases](https://github.com/gakipaiperopero/bilimiao-EN/releases)
+2. Extract: `tar -xzf bilimiao-*-linux-x64.tar.gz`
+3. Run: `./bilimiao/bin/bilimiao`
+
+**Requirements:**
+- **VLC 3.0+** — required for video playback. Install via your package manager:
+  - Debian/Ubuntu: `sudo apt install vlc`
+  - Arch Linux: `sudo pacman -S vlc`
+  - Fedora: `sudo dnf install vlc`
+- **FFmpeg** (optional) — enables automatic DASH stream muxing during downloads. Install if you want video+audio merged into a single MKV file.
+
+### Android Usage
+
+Install the APK directly. Two flavors are available:
+- `app-full-debug.apk` — includes Baidu stats, Geetest CAPTCHA, and AV1 decoder
+- `app-foss-debug.apk` — no proprietary dependencies
+
 ## License
 
 This project is licensed under the **GNU General Public License v3.0** — see the [LICENSE](LICENSE) file for details.

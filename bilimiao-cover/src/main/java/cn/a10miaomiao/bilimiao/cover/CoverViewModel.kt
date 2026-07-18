@@ -145,7 +145,7 @@ class CoverViewModel(
     }
 
     // 普通视频
-    // EN: Normal video
+    private suspend fun loadAvData() {
         val req = ViewReq(aid = id.toLong())
         val res = BiliGRPCHttp.request {
             ViewGRPC.view(req)
@@ -164,7 +164,7 @@ class CoverViewModel(
     }
 
     // 普通视频 BV
-    // EN: Normal video BV
+    private suspend fun loadBVData() {
         val req = ViewReq(bvid = id)
         val res = BiliGRPCHttp.request {
             ViewGRPC.view(req)
@@ -183,12 +183,12 @@ class CoverViewModel(
     }
 
     // 番剧
-    // EN: Bangumi
+    private fun loadSsData() {
 
     }
 
     // 番剧剧集
-    // EN: Bangumi episode
+    private suspend fun loadEpData() {
         val res = BangumiAPI().episodeInfo(id).call().json<ResponseResult<SeasonEpisodeInfo>>()
         if (res.code == 0) {
             val data = res.requireData()
@@ -210,7 +210,7 @@ class CoverViewModel(
     }
 
     // 直播间
-    // EN: Live room
+    private suspend fun loadRoomData() {
         val res = LiveApi().info(id).call().json<ResponseData<RoomInfo>>()
         if (res.isSuccess) {
             val data = res.requireData()
@@ -226,7 +226,7 @@ class CoverViewModel(
     }
 
     // 专栏
-    // EN: Article
+    private suspend fun loadCvData() {
         val res = ArticleAPI().info(id).call().json<ResponseData<ArticleInfo>>()
         if (res.isSuccess) {
             val data = res.requireData()
@@ -242,7 +242,7 @@ class CoverViewModel(
     }
 
     // 音频
-    // EN: Audio
+    private suspend fun loadAuData() {
         val res = AudioAPI().info(id).call().json<ResponseData<AudioInfo>>()
         if (res.isSuccess) {
             val data = res.requireData()
