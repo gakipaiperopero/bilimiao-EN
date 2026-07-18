@@ -175,10 +175,12 @@ private fun VolumeControl(
     volume: Int,
     onVolumeChange: (Int) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     var previousVolume by remember { mutableStateOf(volume) }
 
-    Box {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.width(140.dp),
+    ) {
         IconButton(onClick = {
             if (volume > 0) {
                 previousVolume = volume
@@ -198,17 +200,19 @@ private fun VolumeControl(
                 modifier = Modifier.size(20.dp),
             )
         }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            Slider(
-                value = volume.toFloat(),
-                onValueChange = { onVolumeChange(it.toInt()) },
-                valueRange = 0f..100f,
-                modifier = Modifier.width(120.dp).padding(horizontal = 8.dp),
-            )
-        }
+        Slider(
+            value = volume.toFloat(),
+            onValueChange = { onVolumeChange(it.toInt()) },
+            valueRange = 0f..100f,
+            modifier = Modifier
+                .width(100.dp)
+                .padding(start = 4.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color.White,
+                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
+            ),
+        )
     }
 }
 
