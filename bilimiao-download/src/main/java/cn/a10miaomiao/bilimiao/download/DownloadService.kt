@@ -1,9 +1,18 @@
+
 package cn.a10miaomiao.bilimiao.download
 
+import android.Manifest
 import android.app.Service
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
 import android.os.IBinder
+import android.provider.MediaStore
+import android.util.Log
+import androidx.core.content.ContextCompat
 import cn.a10miaomiao.bilimiao.download.entry.BiliDownloadEntryAndPathInfo
 import cn.a10miaomiao.bilimiao.download.entry.BiliDownloadEntryInfo
 import cn.a10miaomiao.bilimiao.download.entry.BiliDownloadMediaFileInfo
@@ -35,8 +44,17 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
         }
 
         fun startService(context: Context) {
+            Log.d("DownloadDebug", "DownloadService.startService")
             val intent = Intent(context, DownloadService::class.java)
-            context.startService(intent)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                context.startService(intent)
+            } else {
+                ContextCompat.startForegroundService(context, intent)
+            }
         }
     }
 
@@ -48,6 +66,7 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     private var audioDownloadManager: DownloadManager? = null
     private var currentTaskId = 1L
     private var idCounter = 1L
+    private var downloadTimeoutJob: Job? = null
 
     private var audioDownloadManagerCallback = object : DownloadManager.Callback {
         override fun onTaskRunning(info: CurrentDownloadInfo) {
@@ -61,8 +80,11 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
         }
 
         override fun onTaskError(info: CurrentDownloadInfo, error: Throwable) {
+            Log.e("DownloadDebug", "Audio download failed: ${error.message}")
             if (downloadManager?.downloadInfo?.status == CurrentDownloadInfo.STATUS_COMPLETED) {
-
+                Log.d("DownloadDebug", "Video is complete, completing download without audio")
+                downloadNotify.showCompletedStatusNotify(info)
+                completeDownload()
             }
         }
 
@@ -82,7 +104,10 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d("DownloadDebug", "DownloadService onCreate")
+        _instance = this
         job = Job()
+        startForegroundIfPossible()
         launch {
             readDownloadList()
             channel.send(this@DownloadService)
@@ -100,14 +125,36 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
 
     override fun onDestroy() {
         super.onDestroy()
+        cancelDownloadTimeout()
         job.cancel()
         _instance = null
+    }
+
+    private fun startForegroundIfPossible() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
+        try {
+            val notification = downloadNotify.builder
+                .setContentTitle("Download service")
+                .setContentText("Preparing downloads")
+                .setProgress(100, 0, true)
+                .setOngoing(true)
+                .build()
+            startForeground(downloadNotify.notificationID, notification)
+        } catch (_: Exception) {
+            // Ignore on older or restricted platforms; downloads should still proceed.
+        }
     }
 
     private fun readDownloadList() {
         val downloadDir = File(getDownloadPath())
         val list = mutableListOf<BiliDownloadEntryAndPathInfo>()
-        downloadDir.listFiles()
+        val children = downloadDir.listFiles() ?: emptyArray()
+        children
             .filter { it.isDirectory }
             .forEach {
                 list.addAll(readDownloadDirectory(it))
@@ -119,11 +166,10 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
         if (!dir.exists() || !dir.isDirectory) {
             return emptyList()
         }
-        return dir.listFiles()
-            .filter { pageDir -> pageDir.isDirectory }
-            .map { File(it.path, "entry.json") }
-            .filter { it.exists() }
-            .map {
+        return dir.listFiles()?.filter { pageDir -> pageDir.isDirectory }
+            ?.map { File(it.path, "entry.json") }
+            ?.filter { it.exists() }
+            ?.map {
                 val entryJson = it.readText()
                 val entry = MiaoJson.fromJson<BiliDownloadEntryInfo>(entryJson)
                 BiliDownloadEntryAndPathInfo(
@@ -131,7 +177,7 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
                     entryDirPath = it.parent,
                     pageDirPath = it.parentFile.parent
                 )
-            }
+            } ?: emptyList()
     }
 
     /**
@@ -148,6 +194,7 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     fun createDownload(
         biliEntry: BiliDownloadEntryInfo
     ) {
+        Log.d("DownloadDebug", "createDownload title=${biliEntry.title} avid=${biliEntry.avid} season=${biliEntry.season_id}")
         val entryDir = getDownloadFileDir(biliEntry)
         // 保存视频信息
         // EN: Save video info
@@ -176,6 +223,7 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     }
 
     fun startDownload(entryDirPath: String) {
+        Log.d("DownloadDebug", "startDownload entryDirPath=$entryDirPath")
         val biliDownInfo = downloadList.find {
             it.entryDirPath == entryDirPath
         }
@@ -193,12 +241,20 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
      */
     // EN: Start task
     fun startDownload(biliDownInfo: BiliDownloadEntryAndPathInfo) = launch {
+        Log.d("DownloadDebug", "startDownload task entryDir=${biliDownInfo.entryDirPath}")
         // 取消当前任务
         // EN: Cancel current task
         downloadManager?.cancel()
         audioDownloadManager?.cancel()
         downloadManager = null
         audioDownloadManager = null
+        
+        // Cancel any existing timeout job
+        downloadTimeoutJob?.cancel()
+        
+        // Start a watchdog timer to prevent hanging
+        startDownloadTimeout()
+        
         // 开始任务/继续任务
         // EN: Start task / Resume task
         val entryDir = File(biliDownInfo.entryDirPath)
@@ -219,26 +275,9 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
             progress = entry.downloaded_bytes,
             length = entry.total_time_milli,
         )
-        if (!danmakuXMLFile.exists()) {
-            try {
-                // 获取弹幕并下载
-                // EN: Get danmaku and download
-                curDownload.value = currentDownloadInfo.copy(
-                    status = CurrentDownloadInfo.STATUS_GET_DANMAKU,
-                )
-                val res = MiaoHttp.request {
-                    url = BiliPalyUrlHelper.danmakuXMLUrl(biliDownInfo.entry)
-                }.awaitCall()
-                val xmlBytes = CompressionTools.decompressXML(res.body!!.bytes())
-                danmakuXMLFile.writeBytes(xmlBytes)
-            } catch (e: Exception){
-                curDownload.value = currentDownloadInfo.copy(
-                    status = CurrentDownloadInfo.STATUS_FAIL_DANMAKU,
-                )
-                e.printStackTrace()
-                return@launch
-            }
-        }
+        curDownload.value = currentDownloadInfo.copy(
+            status = CurrentDownloadInfo.STATUS_PREPARING,
+        )
         downloadVideo(currentDownloadInfo, biliDownInfo)
     }
 
@@ -259,13 +298,17 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
             curDownload.value = currentDownloadInfo.copy(
                 status = CurrentDownloadInfo.STATUS_GET_PLAYURL,
             )
-            //获取播放地址并下载
-            // EN: Get play URL and download
             val mediaFileInfo = BiliPalyUrlHelper.playUrl(entry)
+            if (mediaFileInfo !is BiliDownloadMediaFileInfo.Type2) {
+                curDownload.value = currentDownloadInfo.copy(
+                    status = CurrentDownloadInfo.STATUS_FAIL_PLAYURL,
+                )
+                return
+            }
+
             val httpHeader = mediaFileInfo.httpHeader()
             val mediaJsonFile = File(videoDir, "index.json")
-            val mediaJsonStr = MiaoJson.toJson(mediaFileInfo)
-            mediaJsonFile.writeText(mediaJsonStr)
+            mediaJsonFile.writeText(MiaoJson.toJson(mediaFileInfo))
 
             if (currentDownloadInfo.taskId != currentTaskId) {
                 return
@@ -273,70 +316,80 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
 
             curMediaFile = mediaJsonFile
             curMediaFileInfo = mediaFileInfo
-            when(mediaFileInfo) {
-                is BiliDownloadMediaFileInfo.Type1 -> {
-                    // TODO: 多视频文件下载
-                    downloadManager = DownloadManager(this, currentDownloadInfo.copy(
-                        url = mediaFileInfo.segment_list[0].url,
-                        header = httpHeader,
-                        size = mediaFileInfo.segment_list[0].bytes,
-                        length = mediaFileInfo.segment_list[0].duration
-                    ), this).also {
-                        it.start(File(videoDir, "0" + "." + mediaFileInfo.format))
-                    }
-                    curDownload.value = currentDownloadInfo
-                }
-                is BiliDownloadMediaFileInfo.Type2 -> {
-                    downloadManager = DownloadManager(this, currentDownloadInfo.copy(
-                        url = mediaFileInfo.video[0].base_url,
-                        header = httpHeader,
-                        size = entry.total_bytes,
-                        length = mediaFileInfo.duration
-                    ), this)
-                    curDownload.value = currentDownloadInfo
-                    downloadManager?.start(File(videoDir, "video.m4s"))
-                    val audio = mediaFileInfo.audio
-                    if (audio != null && audio.isNotEmpty()) {
-                        audioDownloadManager = DownloadManager(this, CurrentDownloadInfo(
-                            taskId = currentDownloadInfo.taskId,
-                            parentDirPath = currentDownloadInfo.parentDirPath,
-                            parentId = currentDownloadInfo.parentId,
-                            id = currentDownloadInfo.id,
-                            name = entry.name,
-                            url = audio[0].base_url,
-                            header = httpHeader,
-                            size = audio[0].size,
-                            length = mediaFileInfo.duration
-                        ), audioDownloadManagerCallback)
-                        audioDownloadManager?.start(File(videoDir, "audio.m4s"))
-                    }
-                    entry.page_data?.let {
-                        entry.page_data = it.copy(
-                            height = mediaFileInfo.video[0].height,
-                            width = mediaFileInfo.video[0].width,
-                        )
-                    }
-                    entry.ep?.let {
-                        entry.ep = it.copy(
-                            height = mediaFileInfo.video[0].height,
-                            width = mediaFileInfo.video[0].width,
-                        )
-                    }
-                    updateBiliDownloadEntryJson(biliDownInfo.entryDirPath, entry)
-                }
-                else -> {
 
-                }
+            val targetFile = File(videoDir, "video.mkv")
+            val videoFile = File(videoDir, "video.m4s")
+            val audioFile = File(videoDir, "audio.m4s")
+
+            val downloadUrl = mediaFileInfo.video[0].base_url
+            val downloadSize = mediaFileInfo.video[0].size.takeIf { it > 0 } ?: entry.total_bytes
+            Log.d("DownloadDebug", "Starting video download: url=$downloadUrl size=$downloadSize")
+            downloadManager = DownloadManager(this, currentDownloadInfo.copy(
+                url = downloadUrl,
+                header = httpHeader,
+                size = downloadSize,
+                length = mediaFileInfo.duration
+            ), this)
+            curDownload.value = currentDownloadInfo.copy(
+                status = CurrentDownloadInfo.STATUS_DOWNLOADING,
+            )
+            downloadManager?.start(videoFile)
+
+            val audio = mediaFileInfo.audio
+            if (audio != null && audio.isNotEmpty()) {
+                audioDownloadManager = DownloadManager(this, CurrentDownloadInfo(
+                    taskId = currentDownloadInfo.taskId,
+                    parentDirPath = currentDownloadInfo.parentDirPath,
+                    parentId = currentDownloadInfo.parentId,
+                    id = currentDownloadInfo.id,
+                    name = entry.name,
+                    url = audio[0].base_url,
+                    header = httpHeader,
+                    size = audio[0].size,
+                    length = mediaFileInfo.duration
+                ), audioDownloadManagerCallback)
+                audioDownloadManager?.start(audioFile)
+            }
+
+            entry.page_data?.let {
+                entry.page_data = it.copy(
+                    height = mediaFileInfo.video[0].height,
+                    width = mediaFileInfo.video[0].width,
+                )
+            }
+            entry.ep?.let {
+                entry.ep = it.copy(
+                    height = mediaFileInfo.video[0].height,
+                    width = mediaFileInfo.video[0].width,
+                )
+            }
+            updateBiliDownloadEntryJson(biliDownInfo.entryDirPath, entry)
+
+            // Wait until both files are downloaded, then mux them into a single MKV.
+            while (
+                curDownload.value?.status == CurrentDownloadInfo.STATUS_DOWNLOADING ||
+                curDownload.value?.status == CurrentDownloadInfo.STATUS_AUDIO_DOWNLOADING ||
+                audioDownloadManager?.downloadInfo?.status == CurrentDownloadInfo.STATUS_DOWNLOADING
+            ) {
+                delay(200)
+            }
+
+            if (videoFile.exists() && audioFile.exists()) {
+                muxVideoAudioToMkv(videoFile, audioFile, targetFile)
             }
         } catch (e: Exception) {
             curDownload.value = currentDownloadInfo.copy(
                 status = CurrentDownloadInfo.STATUS_FAIL_PLAYURL,
             )
             e.printStackTrace()
+            downloadManager?.cancel()
+            audioDownloadManager?.cancel()
+            nextDownload()
         }
     }
 
     fun cancelDownload(taskId: Long) {
+        cancelDownloadTimeout()
         if (taskId == currentTaskId) {
             downloadManager?.cancel()
             audioDownloadManager?.cancel()
@@ -397,7 +450,7 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
             if (entryDir.exists()) {
                 entryDir.deleteRecursively()
             }
-            if (downloadDir.listFiles().size === 0) {
+            if (downloadDir.listFiles()?.size == 0) {
                 downloadDir.delete()
             }
         }
@@ -410,20 +463,50 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     }
 
     /**
+     * Start download timeout watchdog
+     */
+    private fun startDownloadTimeout() {
+        downloadTimeoutJob = launch {
+            delay(120000) // 2 minutes timeout (reduced from 5 min)
+            if (curDownload.value?.status == CurrentDownloadInfo.STATUS_DOWNLOADING) {
+                Log.w("DownloadDebug", "Download timed out after 2 minutes")
+                downloadManager?.cancel()
+                audioDownloadManager?.cancel()
+                curDownload.value = curDownload.value?.copy(
+                    status = CurrentDownloadInfo.STATUS_FAIL_DOWNLOAD
+                )
+                downloadNotify.showErrorStatusNotify(curDownload.value!!)
+                nextDownload()
+            }
+        }
+    }
+
+    /**
+     * Cancel download timeout watchdog
+     */
+    private fun cancelDownloadTimeout() {
+        downloadTimeoutJob?.cancel()
+        downloadTimeoutJob = null
+    }
+
+    /**
      * 完成下载
      */
     private fun completeDownload() {
+        cancelDownloadTimeout()
         val (_, entryDirPath, entry) = curBiliDownloadEntryAndPathInfo ?: return
         entry.downloaded_bytes = entry.total_bytes
         entry.total_bytes = entry.total_bytes
         entry.is_completed = true
         entry.total_time_milli = (curDownload.value?.length ?: 0L) * 1000
         updateBiliDownloadEntryJson(entryDirPath, entry)
-        // Attempt to mux DASH video+audio into single MKV via ffmpeg-kit or system FFmpeg
-        // TODO: Replace with proper ffmpeg-kit integration for reliable Android muxing
+
         if (entry.type_tag != null) {
             val videoDir = File(entryDirPath, entry.type_tag)
-            muxDashToMkv(videoDir)
+            val videoFile = File(videoDir, "video.m4s")
+            val audioFile = File(videoDir, "audio.m4s")
+            val mkvFile = File(videoDir, "video.mkv")
+            finalizeDownloadedFile(videoFile, audioFile, mkvFile)
         }
         downloadListVersion.value++
         curDownload.value = null
@@ -434,27 +517,114 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
         nextDownload()
     }
 
-    private fun muxDashToMkv(videoDir: File) {
+    private fun finalizeDownloadedFile(videoFile: File, audioFile: File, targetFile: File) {
+        if (!videoFile.exists()) return
+        if (targetFile.exists()) return
+
+        targetFile.parentFile?.mkdirs()
+        if (audioFile.exists()) {
+            muxVideoAudioToMkv(videoFile, audioFile, targetFile)
+        } else {
+            runCatching {
+                val mp4File = File(targetFile.parent, "video.mp4")
+                videoFile.copyTo(mp4File, overwrite = true)
+                videoFile.delete()
+                copyToPublicDownloads(mp4File, "video/mp4")
+                return
+            }.onFailure { e ->
+                e.printStackTrace()
+            }
+        }
+
+        if (targetFile.exists()) {
+            copyToPublicDownloads(targetFile, "video/x-matroska")
+        }
+    }
+
+    private fun copyToPublicDownloads(file: File, mimeType: String) {
+        try {
+            val displayName = "bilimiao_${System.currentTimeMillis()}.${file.extension}"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+                    put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/bilimiao_EN")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        FileInputStream(file).copyTo(out)
+                    }
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Downloads.IS_PENDING, 0)
+                    contentResolver.update(uri, contentValues, null, null)
+                }
+            } else {
+                val destDir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS
+                )
+                val destFile = File(destDir, "bilimiao_EN/$displayName")
+                destFile.parentFile?.mkdirs()
+                file.copyTo(destFile, overwrite = true)
+            }
+            Log.d("DownloadDebug", "Copied to public Downloads: $displayName")
+        } catch (e: Exception) {
+            Log.e("DownloadDebug", "Failed to copy to public Downloads: ${e.message}")
+        }
+    }
+
+    private fun copyToPublicDownloads(file: File) {
+        try {
+            val displayName = "bilimiao_${System.currentTimeMillis()}.mkv"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, displayName)
+                    put(MediaStore.Downloads.MIME_TYPE, "video/x-matroska")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/bilimiao_EN")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    contentResolver.openOutputStream(uri)?.use { out ->
+                        FileInputStream(file).copyTo(out)
+                    }
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Downloads.IS_PENDING, 0)
+                    contentResolver.update(uri, contentValues, null, null)
+                }
+            } else {
+                val destDir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS
+                )
+                val destFile = File(destDir, "bilimiao_EN/$displayName")
+                destFile.parentFile?.mkdirs()
+                file.copyTo(destFile, overwrite = true)
+            }
+            Log.d("DownloadDebug", "Copied to public Downloads: $displayName")
+        } catch (e: Exception) {
+            Log.e("DownloadDebug", "Failed to copy to public Downloads: ${e.message}")
+        }
+    }
+
+    private fun muxVideoAudioToMkv(videoFile: File, audioFile: File, targetFile: File) {
         runCatching {
-            val videoFile = File(videoDir, "video.m4s")
-            val audioFile = File(videoDir, "audio.m4s")
-            val mkvFile = File(videoDir, "video.mkv")
             if (!videoFile.exists() || !audioFile.exists()) return
-            if (mkvFile.exists()) return
+            if (targetFile.exists()) return
 
             val process = ProcessBuilder(
                 "ffmpeg",
                 "-i", videoFile.absolutePath,
                 "-i", audioFile.absolutePath,
                 "-c", "copy",
-                mkvFile.absolutePath,
+                targetFile.absolutePath,
                 "-y",
             )
                 .redirectErrorStream(true)
                 .start()
 
             val exitCode = process.waitFor()
-            if (exitCode == 0 && mkvFile.exists()) {
+            if (exitCode == 0 && targetFile.exists()) {
                 videoFile.delete()
                 audioFile.delete()
             }
@@ -482,6 +652,8 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     }
 
     override fun onTaskRunning(info: CurrentDownloadInfo) {
+        Log.d("DownloadDebug", "Download progress: ${info.progress}/${info.size} (${info.rate * 100}%)")
+        
         // 获取视频文件长度
         // EN: Get video file length
         if (info.progress == 0L && info.size != 0L) {
@@ -508,12 +680,13 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     }
 
     override fun onTaskComplete(info: CurrentDownloadInfo) {
-        if (info.size == 0L || info.size != info.progress) {
-            // TODO: 未知错误
+        if (info.size == 0L) {
             return
         }
+        Log.d("DownloadDebug", "Download completed with progress=${info.progress}/${info.size}")
         when (audioDownloadManager?.downloadInfo?.status) {
-            CurrentDownloadInfo.STATUS_DOWNLOADING -> {
+            CurrentDownloadInfo.STATUS_DOWNLOADING,
+            CurrentDownloadInfo.STATUS_WAIT -> {
                 // 等待音频下载完成
                 // EN: Wait for audio download to complete
                 curDownload.value = info.copy(
@@ -552,6 +725,10 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
             )
             downloadListVersion.value++
         }
+        // Clean up and try next download
+        downloadManager?.cancel()
+        audioDownloadManager?.cancel()
+        nextDownload()
     }
 
     private fun updateBiliDownloadEntryJson(
@@ -566,11 +743,16 @@ class DownloadService: Service(), CoroutineScope, DownloadManager.Callback {
     }
 
     fun getDownloadPath(): String {
-        var file = File("/storage/emulated/0/Download/bilimiao_EN")
-        if (!file.exists()) {
-            file.mkdir()
-        }
+        val baseDir = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: filesDir
+        val file = ensureDownloadDirectory(baseDir, "bilimiao_EN")
         return file.canonicalPath
+    }
+
+    internal fun ensureDownloadDirectory(baseDir: File, childDirName: String): File {
+        val dir = File(baseDir, childDirName)
+        dir.mkdirs()
+        return dir
     }
 
     private fun getDownloadFileDir(biliEntry: BiliDownloadEntryInfo): File {

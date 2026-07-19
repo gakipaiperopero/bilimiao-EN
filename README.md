@@ -19,8 +19,12 @@ This is a fork of the excellent [bilimiao2](https://github.com/10miaomiao/bilimi
 
 - **English translations** — All Chinese UI text and code comments have been translated to English for international contributors
 - **Desktop improvements** — Fixed no-sound issues in the desktop VLC player; added FFmpeg-based DASH stream muxing (video.m4s + audio.m4s → single video.mkv) during downloads
-- **Different download paths** — Android: `/storage/emulated/0/Download/bilimiao_EN/`; Desktop: `~/Downloads/bilimiao/`
+- **Different download paths** — Android: `Android/data/.../files/Download/bilimiao_EN/` (app-specific, then exported to public `Downloads/bilimiao_EN/` via MediaStore); Desktop: `~/Downloads/bilimiao/`
 - **No F-Droid release** — This fork does not publish to F-Droid. Only GitHub Releases are available.
+
+### Known Issues
+
+- **Android audio stream download (DASH audio CDN timeout)** — On Android, the DASH audio CDN URL (`30216.m4s`) consistently hangs while the video stream downloads successfully. This appears to be a CDN-level issue specific to the Android platform (desktop downloads work fine). The app handles this by timing out after 10 seconds and completing the download with video only. This results in a silent `.mkv` file unless FFmpeg is available on the device. This bug is Android-only and does not affect the desktop build.
 
 ### Credits
 

@@ -1,6 +1,7 @@
 package cn.a10miaomiao.bilimiao.compose.common.download
 
 import android.content.Context
+import android.util.Log
 import cn.a10miaomiao.bilimiao.compose.common.download.entry.BiliDownloadEntryAndPathInfo
 import cn.a10miaomiao.bilimiao.compose.common.download.entry.BiliDownloadEntryInfo
 import cn.a10miaomiao.bilimiao.compose.common.download.entry.CurrentDownloadInfo
@@ -20,25 +21,32 @@ class DownloadManagerAndroid(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val _downloadListVersion = MutableStateFlow(0)
     private val _curDownload = MutableStateFlow<CurrentDownloadInfo?>(null)
+    private val pendingCreates = mutableListOf<BiliDownloadEntryInfo>()
+    private val pendingLock = Any()
 
     private val service: DownloadService?
         get() = DownloadService.instance
 
     init {
-        // 确保服务已启动
-        DownloadService.startService(context)
-        // 桥接状态流
+        Log.d("DownloadDebug", "DownloadManagerAndroid init start")
+        DownloadService.startService(context.applicationContext)
         scope.launch {
-            while (true) {
+            var waited = 0
+            while (waited < 100) {
                 val svc = service
                 if (svc != null) {
+                    Log.d("DownloadDebug", "DownloadManagerAndroid service connected")
                     launch { svc.downloadListVersion.collect { _downloadListVersion.value = it } }
                     launch { svc.curDownload.collect { raw -> _curDownload.value = raw?.toCommon() } }
-                    break
+                    flushPendingCreates(svc)
+                    return@launch
                 }
                 kotlinx.coroutines.delay(100)
+                waited++
             }
+            Log.e("DownloadDebug", "DownloadService failed to start after 10s")
         }
+        Log.d("DownloadDebug", "DownloadManagerAndroid init done")
     }
 
     override val downloadListVersion: StateFlow<Int> get() = _downloadListVersion
@@ -47,14 +55,46 @@ class DownloadManagerAndroid(
     override val downloadList: List<BiliDownloadEntryAndPathInfo>
         get() = service?.downloadList?.map { it.toCommon() } ?: emptyList()
 
-    override fun getDownloadPath(): String = service?.getDownloadPath() ?: ""
+    override fun getDownloadPath(): String {
+        val svc = service
+        if (svc != null) return svc.getDownloadPath()
+        val baseDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+            ?: context.filesDir
+        return File(baseDir, "bilimiao_EN").also { it.mkdirs() }.canonicalPath
+    }
 
     override fun readDownloadDirectory(dirPath: String): List<BiliDownloadEntryAndPathInfo> {
         return service?.readDownloadDirectory(File(dirPath))?.map { it.toCommon() } ?: emptyList()
     }
 
+    private fun flushPendingCreates(svc: DownloadService) {
+        val pending: List<BiliDownloadEntryInfo>
+        synchronized(pendingLock) {
+            if (pendingCreates.isEmpty()) {
+                return
+            }
+            pending = pendingCreates.toList()
+            pendingCreates.clear()
+        }
+        pending.forEach { entry ->
+            Log.d("DownloadDebug", "DownloadManagerAndroid.flushPendingCreates title=${entry.title}")
+            svc.createDownload(entry.toOriginal())
+        }
+    }
+
     override fun createDownload(biliEntry: BiliDownloadEntryInfo) {
-        service?.createDownload(biliEntry.toOriginal())
+        Log.d("DownloadDebug", "DownloadManagerAndroid.createDownload title=${biliEntry.title}")
+        val svc = service
+        if (svc != null) {
+            Log.d("DownloadDebug", "DownloadManagerAndroid service available, forwarding directly")
+            svc.createDownload(biliEntry.toOriginal())
+        } else {
+            Log.d("DownloadDebug", "DownloadManagerAndroid service null, queuing + starting service")
+            synchronized(pendingLock) {
+                pendingCreates.add(biliEntry)
+            }
+            DownloadService.startService(context.applicationContext)
+        }
     }
 
     override fun startDownload(entryDirPath: String) {

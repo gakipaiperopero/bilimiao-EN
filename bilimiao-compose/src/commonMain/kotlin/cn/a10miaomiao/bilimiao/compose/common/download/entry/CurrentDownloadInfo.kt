@@ -29,6 +29,7 @@ data class CurrentDownloadInfo(
         STATUS_GET_DANMAKU -> "获取弹幕"
         STATUS_GET_PLAYURL -> "获取播放地址"
         STATUS_WAIT -> "等待中"
+        STATUS_PREPARING -> "准备下载"
         else -> "等待中"
     }
 
@@ -37,10 +38,11 @@ data class CurrentDownloadInfo(
     companion object {
         const val STATUS_DOWNLOADING = 100
         const val STATUS_AUDIO_DOWNLOADING = 101
+        const val STATUS_PREPARING = 102
         const val STATUS_COMPLETED = 200
         const val STATUS_PAUSE = 201
-        const val STATUS_GET_DANMAKU = 102
-        const val STATUS_GET_PLAYURL = 101
+        const val STATUS_GET_DANMAKU = 103
+        const val STATUS_GET_PLAYURL = 104
         const val STATUS_FAIL_DOWNLOAD = -100
         const val STATUS_FAIL_DANMAKU = -102
         const val STATUS_FAIL_PLAYURL = -101
